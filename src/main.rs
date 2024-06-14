@@ -1,66 +1,136 @@
-use std::collections::VecDeque;
+#![no_std]
+#![no_main]
 
-use macroquad::prelude::*;
+extern crate alloc;
 
-#[cfg(target_arch = "wasm32")]
-const IS_WASM: bool = true;
-#[cfg(not(target_arch = "wasm32"))]
-const IS_WASM: bool = false;
+use alloc::collections::VecDeque;
+use alloc::format;
 
-#[macroquad::main("Three Bodies")]
-async fn main() {
-    rand::srand(42);
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_hal_bus::spi::ExclusiveDevice;
+#[allow(unused_imports)]
+use esp_backtrace as _;
+use esp_hal::{
+    clock::ClockControl,
+    delay::Delay,
+    gpio::IO,
+    peripherals::Peripherals,
+    prelude::*,
+    rng::Rng,
+    spi::master::Spi,
+    spi::SpiMode,
+    system::SystemExt,
+    systimer::SystemTimer,
+};
+use esp_println::println;
+use log::LevelFilter;
+use micromath::*;
+
+use crate::boot::{boot, init_heap, init_logger};
+use crate::color::Color;
+use crate::color::colors::WHITE;
+use crate::display::Display;
+use crate::vec2::{Vec2, vec2};
+
+mod boot;
+mod display;
+mod rand;
+mod vec2;
+mod color;
+
+
+#[entry]
+fn main() -> ! {
+    let peripherals = Peripherals::take();
+    let system = peripherals.SYSTEM.split();
+    let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
+    boot(
+        &clocks,
+        peripherals.LPWR,
+        peripherals.TIMG0,
+        peripherals.TIMG1,
+    );
+    init_heap();
+    init_logger(LevelFilter::Debug);
+    println!("Test!");
+
+    let rng = Rng::new(peripherals.RNG);
+    rand::set_rand(rng);
+    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
+
+
+    let delay = Delay::new(&clocks);
+
+    let miso = io.pins.gpio23;
+    let mosi = io.pins.gpio19;
+    let sclk = io.pins.gpio18;
+    let lcd_dc = io.pins.gpio20.into_push_pull_output();
+    let lcd_reset = io.pins.gpio21.into_push_pull_output();
+    let lcd_cs = io.pins.gpio22.into_push_pull_output();
+
+    let spi = Spi::new(
+        peripherals.SPI2,
+        40u32.MHz(),
+        SpiMode::Mode0,
+        &clocks,
+    )
+        .with_sck(sclk)
+        .with_mosi(mosi)
+        .with_miso(miso);
+
+    // let mut st7735 = ST7735::new(spi.into(), lcd_dc, lcd_reset, true, false, 320, 240);
+
+    // st7735.init(&mut delay).unwrap();
+
+    let device = ExclusiveDevice::new(spi, lcd_cs, delay.clone()).unwrap();
+
+    let mut display: Display = Display::init(device, lcd_dc, lcd_reset, delay.clone());
+
     let mut bodies = [
-        Body::new_random(0),
-        Body::new_random(1),
-        Body::new_random(2),
+        Body::new_random(0, &mut display),
+        Body::new_random(1, &mut display),
+        Body::new_random(2, &mut display),
     ];
     let mut trails: VecDeque<Trail> = VecDeque::new();
     let mut running = true;
-    let mut show_ui = Ui::Full;
-    let mut auto_restart = IS_WASM;
-    let mut elastic_collisions = false;
+    let show_ui = Ui::Full;
+    let auto_restart = true;
+    let elastic_collisions = false;
+    let mut time = SystemTimer::now();
 
     loop {
-        // Exit on escape.
-        if !IS_WASM && is_key_released(KeyCode::Escape) {
-            break;
-        }
-
         // Reset on space, or if auto restart is on.
-        if is_key_released(KeyCode::Space)
-            || is_mouse_button_released(MouseButton::Left)
-            || (!running && auto_restart)
-        {
+        if !running && auto_restart {
             bodies = [
-                Body::new_random(0),
-                Body::new_random(1),
-                Body::new_random(2),
+                Body::new_random(0, &mut display),
+                Body::new_random(1, &mut display),
+                Body::new_random(2, &mut display),
             ];
             trails.clear();
             running = true;
         }
 
         // Toggle UI on U.
-        if is_key_released(KeyCode::U) {
-            show_ui.toggle();
-        }
+        // if is_key_released(KeyCode::U) {
+        //     show_ui.toggle();
+        // }
 
         // Toggle auto-restart on R.
-        if is_key_released(KeyCode::R) {
-            auto_restart = !auto_restart;
-        }
+        // if is_key_released(KeyCode::R) {
+        //     auto_restart = !auto_restart;
+        // }
 
         // Toggle elastic collisions on C.
-        if is_key_released(KeyCode::C) {
-            elastic_collisions = !elastic_collisions;
-        }
+        // if is_key_released(KeyCode::C) {
+        //     elastic_collisions = !elastic_collisions;
+        // }
 
         if running {
             // Calculate forces to apply based on last frame's positions.
             let mut new_bodies = bodies;
             new_bodies.iter_mut().for_each(|body| {
-                body.update_velocity(bodies.iter().copied(), elastic_collisions);
+                body.update_velocity(&mut display, bodies.iter().copied(), elastic_collisions);
             });
 
             // Update positions based on new velocities.
@@ -70,7 +140,7 @@ async fn main() {
             while trails.front().map_or(false, |trail| trail.colour.a < 0.01) {
                 trails.pop_front();
             }
-            bodies.iter_mut().for_each(Body::update_position);
+            bodies.iter_mut().for_each(|body| body.update_position(&mut display));
 
             if !elastic_collisions {
                 // If two bodies collide, stop the simulation.
@@ -79,13 +149,29 @@ async fn main() {
         }
 
         // Draw all bodies & trails.
-        clear_background(BLACK);
-        bodies.iter().for_each(Body::draw);
-        trails.iter().for_each(Trail::draw);
-        draw_ui(&bodies, show_ui, auto_restart, running, elastic_collisions);
+        display.clear_background(Rgb565::BLACK);
+        // bodies.iter().for_each(Body::draw);
+        for body in &bodies {
+            body.draw(&mut display);
+        }
+        // trails.iter().for_each(Trail::draw);
+        for trail in &trails {
+            trail.draw(&mut display);
+        }
+        draw_ui(&mut display, &bodies, show_ui, auto_restart, running, elastic_collisions);
 
-        next_frame().await
+        next_frame(&mut time, &delay);
     }
+}
+
+fn next_frame(time: &mut u64, delay: &Delay) {
+    let now = SystemTimer::now();
+    let sleep_target = *time + (1000 / 30);
+    let remaining_sleep_time = sleep_target - now;
+    if remaining_sleep_time > 0 {
+        delay.delay_millis(remaining_sleep_time as u32);
+    }
+    *time = SystemTimer::now();
 }
 
 /// Returns true if any two bodies are colliding.
@@ -102,6 +188,7 @@ fn has_collision(bodies: &[Body]) -> bool {
 
 /// Draws the UI.
 fn draw_ui(
+    display: &mut Display,
     bodies: &[Body],
     show_ui: Ui,
     auto_restart: bool,
@@ -109,10 +196,10 @@ fn draw_ui(
     elastic_collisions: bool,
 ) {
     if !running {
-        draw_text(
+        display.draw_text(
             "COLLISION",
-            screen_width() / 2.0 - 64.0, // NB Manually centred.
-            screen_height() / 2.0,
+            display.screen_width() / 2.0 - 64.0, // NB Manually centred.
+            display.screen_height() / 2.0,
             32.0,
             WHITE,
         );
@@ -121,14 +208,14 @@ fn draw_ui(
     // Body info
     if matches!(show_ui, Ui::Full | Ui::Minimal) {
         for body in bodies {
-            draw_text(
+            display.draw_text(
                 &format!("m {:.2}", body.mass),
                 body.position.x + 10.0,
                 body.position.y + 10.0,
                 16.0,
                 body.colour,
             );
-            draw_text(
+            display.draw_text(
                 &format!("v {:.2}", body.velocity.length()),
                 body.position.x + 10.0,
                 body.position.y + 20.0,
@@ -156,10 +243,10 @@ fn draw_ui(
             .iter()
             .enumerate()
             .for_each(|(idx, instruction)| {
-                draw_text(
+                display.draw_text(
                     instruction,
                     10.0,
-                    screen_height() - 14.0 - idx as f32 * 14.0,
+                    display.screen_height() - 14.0 - idx as f32 * 14.0,
                     16.0,
                     WHITE,
                 )
@@ -197,7 +284,7 @@ struct Body {
 
 impl Body {
     /// Creates a new body with random properties.
-    fn new_random(id: usize) -> Self {
+    fn new_random(id: usize, display: &mut Display) -> Self {
         let colour = Color::new(
             rand::gen_range(0.2, 1.0),
             rand::gen_range(0.2, 1.0),
@@ -205,8 +292,8 @@ impl Body {
             1.0,
         );
         let position = vec2(
-            rand::gen_range(screen_width() * 0.25, screen_width() * 0.75),
-            rand::gen_range(screen_height() * 0.25, screen_height() * 0.75),
+            rand::gen_range(display.screen_width() * 0.25, display.screen_width() * 0.75),
+            rand::gen_range(display.screen_height() * 0.25, display.screen_height() * 0.75),
         );
         let velocity = vec2(rand::gen_range(-1.0, 1.0), rand::gen_range(-1.0, 1.0));
         let mass = rand::gen_range(1., 10.);
@@ -220,14 +307,15 @@ impl Body {
     }
 
     /// Draws the body on the screen.
-    fn draw(&self) {
-        draw_circle(self.position.x, self.position.y, self.mass, self.colour);
+    fn draw(&self, display: &mut Display) {
+        display.draw_circle(self.position.x, self.position.y, self.mass, self.colour);
     }
 
     /// Updates the velocity of the body based on the forces applied by other bodies.
     fn update_velocity(
         &mut self,
-        bodies: impl Iterator<Item = Self> + Clone,
+        display: &mut Display,
+        bodies: impl Iterator<Item=Self> + Clone,
         elastic_collisions: bool,
     ) {
         let mut collided = elastic_collisions;
@@ -257,12 +345,12 @@ impl Body {
             .filter(|&body| body.id != self.id)
             .map(|other| {
                 let mut delta = other.position - self.position;
-                if delta.x.abs() > screen_width() / 2.0 {
-                    delta.x = delta.x - delta.x.signum() * screen_width();
+                if delta.x.abs() > display.screen_width() / 2.0 {
+                    delta.x = delta.x - delta.x.signum() * display.screen_width();
                 }
 
-                if delta.y.abs() > screen_height() / 2.0 {
-                    delta.y = delta.y - delta.y.signum() * screen_height();
+                if delta.y.abs() > display.screen_height() / 2.0 {
+                    delta.y = delta.y - delta.y.signum() * display.screen_height();
                 }
                 let distance = delta.length();
                 let direction = delta.normalize();
@@ -275,17 +363,17 @@ impl Body {
     }
 
     /// Updates the position of the body based on its velocity.
-    fn update_position(&mut self) {
+    fn update_position(&mut self, display: &mut Display) {
         self.position += self.velocity;
-        if self.position.x > screen_width() {
-            self.position.x -= screen_width();
+        if self.position.x > display.screen_width() {
+            self.position.x -= display.screen_width();
         } else if self.position.x < 0. {
-            self.position.x += screen_width();
+            self.position.x += display.screen_width();
         }
-        if self.position.y > screen_height() {
-            self.position.y -= screen_height();
+        if self.position.y > display.screen_height() {
+            self.position.y -= display.screen_height();
         } else if self.position.y < 0. {
-            self.position.y += screen_height();
+            self.position.y += display.screen_height();
         }
     }
 
@@ -304,8 +392,8 @@ struct Trail {
 
 impl Trail {
     /// Draws the trail on the screen.
-    fn draw(&self) {
-        draw_circle(self.position.x, self.position.y, 1.0, self.colour);
+    fn draw(&self, display: &mut Display) {
+        display.draw_circle(self.position.x, self.position.y, 1.0, self.colour);
     }
 }
 
