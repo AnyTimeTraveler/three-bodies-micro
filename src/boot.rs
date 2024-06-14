@@ -35,7 +35,7 @@ impl Log for ESPLogger {
 static ALLOCATOR: EspHeap = EspHeap::empty();
 
 pub(crate) fn init_heap() {
-    const HEAP_SIZE: usize = 32 * 1024;
+    const HEAP_SIZE: usize = 128 * 1024;
     static mut HEAP: MaybeUninit<[u8; HEAP_SIZE]> = MaybeUninit::uninit();
 
     unsafe {

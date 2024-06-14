@@ -199,6 +199,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-graphics-framebuf"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22354420f68727fa24d1e2741dae1e9a041065e80fb63b35a8d19c647a85be76"
+dependencies = [
+ "embedded-dma",
+ "embedded-graphics",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -224,12 +234,6 @@ dependencies = [
  "embedded-hal",
  "nb",
 ]
-
-[[package]]
-name = "embedded-io"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "enum-as-inner"
@@ -316,7 +320,6 @@ dependencies = [
  "embedded-dma",
  "embedded-hal",
  "embedded-hal-nb",
- "embedded-io",
  "enumset",
  "esp-build",
  "esp-hal-procmacros",
@@ -372,7 +375,6 @@ checksum = "e98f0f58453dd2ce08d99228fc8757fad39d05dfd26643665d1093b8844f42cc"
 dependencies = [
  "critical-section",
  "log",
- "portable-atomic",
 ]
 
 [[package]]
@@ -815,14 +817,13 @@ name = "three-bodies"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
+ "embedded-graphics-framebuf",
  "embedded-hal",
  "embedded-hal-bus",
- "embedded-io",
  "esp-alloc",
  "esp-backtrace",
  "esp-hal",
  "esp-println",
- "fugit",
  "log",
  "micromath",
  "st7735-lcd",

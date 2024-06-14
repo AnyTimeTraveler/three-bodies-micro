@@ -15,6 +15,14 @@ pub(crate) fn gen_range(lower: f32, upper: f32) -> f32 {
     }
 }
 
+pub(crate) fn gen() -> u32 {
+    if let Some(rad) = unsafe { RAND.get_mut() } {
+        rad.random()
+    } else {
+        panic!("RNG broken!");
+    }
+}
+
 pub(crate) fn set_rand(rng: Rng) {
     let _ = unsafe { RAND.set(rng) };
 }

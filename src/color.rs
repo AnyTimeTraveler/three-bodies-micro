@@ -11,7 +11,7 @@ pub struct Color {
     /// Green channel value from 0.0 to 1.0
     pub b: f32,
     /// Alpha channel value from 0.0 to 1.0
-    pub a: f32,
+    pub a: f32
 }
 
 /// Build a color from 4 components of 0..255 values

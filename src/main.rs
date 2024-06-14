@@ -8,6 +8,7 @@ use alloc::format;
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
+use embedded_hal::delay::DelayNs;
 use embedded_hal_bus::spi::ExclusiveDevice;
 #[allow(unused_imports)]
 use esp_backtrace as _;
@@ -36,15 +37,21 @@ use crate::vec2::{Vec2, vec2};
 mod boot;
 mod display;
 mod rand;
+
+#[allow(unused)]
 mod vec2;
+
+#[allow(unused)]
 mod color;
+
+const FRAMERATE: u64 = 15;
 
 
 #[entry]
 fn main() -> ! {
     let peripherals = Peripherals::take();
     let system = peripherals.SYSTEM.split();
-    let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
+    let clocks = ClockControl::max(system.clock_control).freeze();
     boot(
         &clocks,
         peripherals.LPWR,
@@ -55,23 +62,35 @@ fn main() -> ! {
     init_logger(LevelFilter::Debug);
     println!("Test!");
 
+    // let timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
     let rng = Rng::new(peripherals.RNG);
     rand::set_rand(rng);
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
 
-    let delay = Delay::new(&clocks);
+    let mut delay = Delay::new(&clocks);
 
-    let miso = io.pins.gpio23;
-    let mosi = io.pins.gpio19;
-    let sclk = io.pins.gpio18;
-    let lcd_dc = io.pins.gpio20.into_push_pull_output();
-    let lcd_reset = io.pins.gpio21.into_push_pull_output();
-    let lcd_cs = io.pins.gpio22.into_push_pull_output();
+    let miso = io.pins.gpio18;
+    let mosi = io.pins.gpio21;
+    let sclk = io.pins.gpio20;
+    let lcd_dc = io.pins.gpio22.into_push_pull_output();
+    let lcd_reset = io.pins.gpio23.into_push_pull_output();
+    let lcd_cs = io.pins.gpio15.into_push_pull_output();
+    let mut lcd_led = io.pins.gpio19.into_push_pull_output();
+
+    lcd_led.set_high();
+    // let sd_cs = io.pins.gpio7.into_push_pull_output();
+    // let touch_cs = io.pins.gpio2.into_push_pull_output();
+    // let touch_irq = io.pins.gpio3.into_pull_up_input();
+    // let fake_cs = io.pins.gpio0.into_push_pull_output();
+    // let i2s_wsel = io.pins.gpio4;
+    // let i2s_dout = io.pins.gpio6;
+    // let i2s_bclk = io.pins.gpio5;
 
     let spi = Spi::new(
         peripherals.SPI2,
-        40u32.MHz(),
+        // MAX: 80 MHz
+        80u32.MHz(),
         SpiMode::Mode0,
         &clocks,
     )
@@ -87,27 +106,53 @@ fn main() -> ! {
 
     let mut display: Display = Display::init(device, lcd_dc, lcd_reset, delay.clone());
 
+    display.clear_background(Rgb565::WHITE);
+    for color in [Rgb565::RED, Rgb565::YELLOW, Rgb565::GREEN, Rgb565::BLUE, Rgb565::MAGENTA, Rgb565::BLACK] {
+        display.clear_background(color);
+        delay.delay_millis(200);
+        display.flush();
+    }
+
+    // display.draw_text("AAA",100,100,10,Color::new(1.0,1.0,1.0,1.0))
+    // delay.delay_millis(500);
+    // display.clear_background(Rgb565::BLACK);
+    // delay.delay_millis(500);
+    // display.clear_background(Rgb565::WHITE);
+    // delay.delay_millis(500);
+    // display.clear_background(Rgb565::BLACK);
+    // delay.delay_millis(500);
+    // display.clear_background(Rgb565::WHITE);
+    // delay.delay_millis(500);
+
+
     let mut bodies = [
         Body::new_random(0, &mut display),
         Body::new_random(1, &mut display),
         Body::new_random(2, &mut display),
     ];
     let mut trails: VecDeque<Trail> = VecDeque::new();
-    let mut running = true;
-    let show_ui = Ui::Full;
+    let mut running = false;
+    let show_ui = Ui::Minimal;
     let auto_restart = true;
     let elastic_collisions = false;
     let mut time = SystemTimer::now();
 
     loop {
+        // println!("New loop");
         // Reset on space, or if auto restart is on.
         if !running && auto_restart {
+            delay.delay_ms(2000);
+            display.clear_background(Rgb565::BLACK);
             bodies = [
                 Body::new_random(0, &mut display),
                 Body::new_random(1, &mut display),
                 Body::new_random(2, &mut display),
             ];
             trails.clear();
+            bodies[0].position = Vec2::new(160., 100.);
+            bodies[0].velocity = Vec2::new(bodies[0].mass / 5., 0.25);
+            bodies[1].position = Vec2::new(160., 140.);
+            bodies[1].velocity = Vec2::new(-bodies[1].mass / 5., -0.25);
             running = true;
         }
 
@@ -126,6 +171,8 @@ fn main() -> ! {
         //     elastic_collisions = !elastic_collisions;
         // }
 
+        // let old_bodies = bodies.clone();
+
         if running {
             // Calculate forces to apply based on last frame's positions.
             let mut new_bodies = bodies;
@@ -135,12 +182,25 @@ fn main() -> ! {
 
             // Update positions based on new velocities.
             bodies = new_bodies;
-            trails.iter_mut().for_each(|trail| trail.colour.a *= 0.995);
+            trails.iter_mut().for_each(|trail| trail.colour.a *= 0.95);
             trails.extend(bodies.iter().map(Trail::from));
+            //     .map(|trail| {
+            //         trail.draw(&mut display);
+            //         trail
+            //     })
+            // );
+            // bodies.iter().map(Trail::from).for_each(|trail| trail.draw(&mut display));
+
             while trails.front().map_or(false, |trail| trail.colour.a < 0.01) {
                 trails.pop_front();
             }
             bodies.iter_mut().for_each(|body| body.update_position(&mut display));
+
+            // clear_ui(&mut display, &old_bodies, show_ui);
+            // for mut body in old_bodies {
+            //     body.colour = BLACK;
+            //     body.draw(&mut display);
+            // }
 
             if !elastic_collisions {
                 // If two bodies collide, stop the simulation.
@@ -158,20 +218,33 @@ fn main() -> ! {
         for trail in &trails {
             trail.draw(&mut display);
         }
+        // trails.iter().last().unwrap().draw(&mut display);
         draw_ui(&mut display, &bodies, show_ui, auto_restart, running, elastic_collisions);
 
+        // println!("Render: {}", ticks_to_ms(SystemTimer::now()) - ticks_to_ms(time));
+        display.flush();
         next_frame(&mut time, &delay);
+        // println!("Wait over");
     }
 }
 
 fn next_frame(time: &mut u64, delay: &Delay) {
     let now = SystemTimer::now();
-    let sleep_target = *time + (1000 / 30);
-    let remaining_sleep_time = sleep_target - now;
-    if remaining_sleep_time > 0 {
+    let now_ms = ticks_to_ms(now);
+    // println!("{}", now_ms - ticks_to_ms(*time));
+    let sleep_target = ticks_to_ms(*time) + (1000 / FRAMERATE);
+    if sleep_target < now_ms {
+        // no need to sleep
+    } else {
+        let remaining_sleep_time = sleep_target - now_ms;
+        // println!("Sleep: {}", remaining_sleep_time);
         delay.delay_millis(remaining_sleep_time as u32);
     }
     *time = SystemTimer::now();
+}
+
+fn ticks_to_ms(ticks: u64) -> u64 {
+    ticks * 1000 / SystemTimer::TICKS_PER_SECOND
 }
 
 /// Returns true if any two bodies are colliding.
@@ -184,6 +257,32 @@ fn has_collision(bodies: &[Body]) -> bool {
         }
     }
     false
+}
+
+#[allow(unused)]
+fn clear_ui(
+    display: &mut Display,
+    bodies: &[Body],
+    show_ui: Ui,
+) {
+    if matches!(show_ui, Ui::Full | Ui::Minimal) {
+        for body in bodies {
+            display.draw_text(
+                &format!("m {:.2}", body.mass),
+                body.position.x + 10.0,
+                body.position.y + 10.0,
+                16.0,
+                Color::new(0.0, 0.0, 0.0, 0.0),
+            );
+            display.draw_text(
+                &format!("v {:.2}", body.velocity.length()),
+                body.position.x + 10.0,
+                body.position.y + 20.0,
+                16.0,
+                Color::new(0.0, 0.0, 0.0, 0.0),
+            );
+        }
+    }
 }
 
 /// Draws the UI.
@@ -254,6 +353,7 @@ fn draw_ui(
     }
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum Ui {
     Full,
@@ -262,6 +362,7 @@ enum Ui {
 }
 
 impl Ui {
+    #[allow(unused)]
     /// Toggles to the next UI state.
     fn toggle(&mut self) {
         *self = match self {
@@ -285,18 +386,39 @@ struct Body {
 impl Body {
     /// Creates a new body with random properties.
     fn new_random(id: usize, display: &mut Display) -> Self {
-        let colour = Color::new(
-            rand::gen_range(0.2, 1.0),
-            rand::gen_range(0.2, 1.0),
-            rand::gen_range(0.2, 1.0),
-            1.0,
-        );
+        // Yass Queen: #ff1d58
+        // Sister Sister: #f75990
+        // Crown Yellow: #fff685
+        // Blue Light: #00DDFF
+        // Brutal Blue: #0049B7
+
+        let minecraft_colors = [
+            0x0000AA,
+            0x00AA00,
+            0x00AAAA,
+            0xAA0000,
+            0xAA00AA,
+            0xFFAA00,
+            0xAAAAAA,
+            0x555555,
+            0x5555FF,
+            0x55FF55,
+            0x55FFFF,
+            0xFF5555,
+            0xFF55FF,
+            0xFFFF55,
+            0xFFFFFF,
+        ];
+
+        let colour = Color::from_hex(minecraft_colors[rand::gen() as usize % minecraft_colors.len()]);
+
         let position = vec2(
-            rand::gen_range(display.screen_width() * 0.25, display.screen_width() * 0.75),
-            rand::gen_range(display.screen_height() * 0.25, display.screen_height() * 0.75),
+            rand::gen_range(0.0, display.screen_width()),
+            rand::gen_range(0.0, display.screen_height()),
         );
-        let velocity = vec2(rand::gen_range(-1.0, 1.0), rand::gen_range(-1.0, 1.0));
-        let mass = rand::gen_range(1., 10.);
+        let speed = 1.5;
+        let velocity = vec2(rand::gen_range(-speed, speed), rand::gen_range(-speed, speed));
+        let mass = rand::gen_range(3., 10.);
         Self {
             id,
             colour,
@@ -308,7 +430,7 @@ impl Body {
 
     /// Draws the body on the screen.
     fn draw(&self, display: &mut Display) {
-        display.draw_circle(self.position.x, self.position.y, self.mass, self.colour);
+        display.draw_circle(self.position.x - (self.mass / 2.0), self.position.y - (self.mass / 2.0), self.mass, self.colour);
     }
 
     /// Updates the velocity of the body based on the forces applied by other bodies.
@@ -379,7 +501,7 @@ impl Body {
 
     /// Returns true if this body collides with another.
     fn collides_with(&self, other: &Self) -> bool {
-        self.position.distance(other.position) <= self.mass + other.mass
+        self.position.distance(other.position) <= ((self.mass + other.mass) / 2.0)
     }
 }
 

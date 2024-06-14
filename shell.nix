@@ -3,6 +3,7 @@
     overrides = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml));
     libPath = with pkgs; lib.makeLibraryPath [
       glibc
+      glibc.static
     ];
 in
   pkgs.mkShell rec {
@@ -14,9 +15,11 @@ in
       llvmPackages.bintools
       rustup
       glibc
+      glibc.static
       tree-sitter
       openssl
       pkg-config
+      cargo-espflash
     ];
     RUSTC_VERSION = overrides.toolchain.channel;
     # https://github.com/rust-lang/rust-bindgen#environment-variables
@@ -29,7 +32,7 @@ in
     RUSTFLAGS = (builtins.map (a: ''-L ${a}/lib'') [
       # add libraries here (e.g. pkgs.libvmi)
     ]);
-#    LD_LIBRARY_PATH = libPath;
+    LD_LIBRARY_PATH = libPath;
     # Add glibc, clang, glib, and other headers to bindgen search path
     BINDGEN_EXTRA_CLANG_ARGS = 
     # Includes normal include path

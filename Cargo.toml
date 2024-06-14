@@ -1,62 +1,40 @@
 [package]
 name = "three-bodies"
 version = "0.1.0"
+authors = ["Simon Struck <simon@simonscode.org>"]
 edition = "2021"
+license = "MIT"
 
 [dependencies]
-#macroquad = "0.4"
-micromath ="2.1.0"
+esp-hal = { version = "0.17.0", features = ["esp32c6"] }
+esp-println = { version = "0.9.0", features = ["esp32c6", "log"] }
+esp-alloc = "0.3.0"
+log = { version = "0.4.20" }
 embedded-graphics = "0.8.1"
 embedded-hal = "1.0.0"
 embedded-hal-bus = "0.2.0"
-esp-alloc = "0.3.0"
-fugit = "0.3.7"
-embedded-io = "0.6.1"
-
-[dependencies.log]
-version = "0.4"
-default-features = false
-features = []
-
-[dependencies.st7735-lcd]
-version = "0.10.0"
-#git = "https://github.com/tarfu/st7735-lcd-rs.git"
-
-#[dependencies.xpt2046]
-#path = "../software/xpt2046"
-#version = "0.3.0"
-
-[dependencies.esp-hal]
-version = "0.17.0"
-features = ["esp32c6", "embedded-hal", "embedded-io", "place-spi-driver-in-ram", "flip-link", "rv-init-data", "rv-zero-rtc-bss", "rv-init-rtc-data"]
+st7735-lcd= "0.10.0"
+micromath ="2.1.0"
+embedded-graphics-framebuf = "0.5.0"
 
 [dependencies.esp-backtrace]
-version = "0.11.1"
-default-features = false
-features = ["esp32c6", "panic-handler", "exception-handler", "colors", "println", "halt-cores"]
-
-[dependencies.esp-println]
-version = "0.9.1"
-default-features = false
-features = ["esp32c6", "log", "jtag-serial", "critical-section", "colors"]
-
-[package.metadata.espflash]
-bootloader = "bootloader.bin" # Must be a binary file
-partition_table = "partitions.csv" # Supports CSV and binary formats
-#format          = "direct-boot"    # Can be 'esp-bootloader' or 'direct-boot'
-format = "esp-bootloader"    # Can be 'esp-bootloader' or 'direct-boot'
-
+version = "0.11.0"
+features = [
+    "esp32c6",
+    "exception-handler",
+    "panic-handler",
+    "println",
+]
 [profile.dev]
-opt-level = 2
-overflow-checks = false
-debug = "line-tables-only"
-lto = "off"
-codegen-units = 1
+# Rust debug is too slow. 
+# For debug builds always builds with some optimization
+opt-level = "s"
 
 [profile.release]
-opt-level = 3
+codegen-units = 1 # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
 overflow-checks = false
-debug = "line-tables-only"
-lto = "off"
-codegen-units = 1
-strip = false
